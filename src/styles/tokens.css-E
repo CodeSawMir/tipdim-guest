@@ -1,0 +1,80 @@
+/* Design tokens: the only place colours, spacing and radii are written. Mirrors the app (src/theme), Slate Indigo. */
+:root {
+  color-scheme: light dark;
+  --primary: #2e3a87;
+  --on-primary: #ffffff;
+  --bg: #f4f4f1;
+  --on-bg: #15171c;
+  --surface: #ffffff;
+  --surface-variant: #ededea;
+  --header: #1f2657;
+  --on-header: #ffffff;
+  --on-header-muted: #c3c9ee;
+  --on-surface-variant: #4b4f5a;
+  --outline: #e6e6e1;
+  --outline-strong: #d2d2cb;
+  --text-muted: #666a75;
+  --success: #15803d;
+  --error: #dc2626;
+  --error-container: #fee2e2;
+  --on-error-container: #7f1d1d;
+  --scrim: rgba(28, 25, 23, 0.5);
+  --shadow: #000000;
+  --shadow-control: 0 1px 2px rgb(from var(--shadow) r g b / 0.05);
+  --shadow-raised: 0 4px 16px rgb(from var(--shadow) r g b / 0.1);
+  --stage: #000000; /* camera viewfinder backdrop */
+
+  --sp-xxs: 2px;
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 12px;
+  --sp-lg: 16px;
+  --sp-xl: 24px;
+  --sp-xxl: 32px;
+  --sp-xxxl: 48px;
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+  --hairline: 1px;
+  --touch: 48px;
+  --mark: 40px;
+  --chip: 30px;
+  --thumb: 40px;
+  --thumb-sm: 32px;
+  --menu-name: 176px;
+  --menu-price: 88px;
+  --menu-wide: 220px;
+  --menu-row: 52px;
+  --page-max: 720px;
+  --muted-opacity: 0.75;
+  --pressed-opacity: 0.85;
+  --motion: 150ms;
+
+  --font-sans: 'Outfit', 'Noto Sans Devanagari', system-ui, sans-serif;
+  --font-ne: 'Noto Sans Devanagari', 'Outfit', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Noto Sans Devanagari', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #9aa6ff;
+    --on-primary: #0f1116;
+    --bg: #0f1116;
+    --on-bg: #f2f3f7;
+    --surface: #171a21;
+    --surface-variant: #232733;
+    --header: #1a2050;
+    --on-surface-variant: #c9ccd6;
+    --outline: #262a35;
+    --outline-strong: #363b49;
+    --text-muted: #a3a8b6;
+    --success: #4ade80;
+    --error: #f87171;
+    --error-container: #7f1d1d;
+    --on-error-container: #fee2e2;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-control: 0 1px 2px rgb(from var(--shadow) r g b / 0.4);
+    --shadow-raised: 0 4px 16px rgb(from var(--shadow) r g b / 0.4);
+  }
+}

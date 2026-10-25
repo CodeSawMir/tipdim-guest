@@ -10,6 +10,8 @@ export type GuestItem = Named & {
   price_paisa: number;
   in_stock: boolean;
   sizes: (Named & { id: string; price_paisa: number })[];
+  /** Extras with their price; shown when the server sends them (the column and sheet section hide when empty). */
+  addons?: (Named & { id?: string; price_paisa: number })[];
 };
 export type GuestMenu = {
   restaurant: { name: string; name_ne: string | null; address: string | null };

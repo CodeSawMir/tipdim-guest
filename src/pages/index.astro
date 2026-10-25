@@ -1,6 +1,8 @@
 ---
 // The whole guest app: one static page. The table token comes from the URL at runtime (/t/<token>, or ?t=<token>),
 // so the host only has to rewrite /t/* to this page (public/_redirects, vercel.json).
+import '../styles/tokens.css';
+import '../styles/guest.css';
 ---
 
 <!doctype html>
@@ -8,31 +10,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#475569" />
+    <meta name="theme-color" content="#1f2657" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a2050" media="(prefers-color-scheme: dark)" />
     <meta name="robots" content="noindex" />
     <title>Tip Dim</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
     />
   </head>
   <body>
     <header class="top">
       <div class="who">
         <h1 id="restaurant"></h1>
-        <p id="table" class="muted"></p>
+        <p id="table" class="sub"></p>
       </div>
       <div class="head-actions">
         <button id="scan-btn" class="ghost" type="button"></button>
         <button id="lang" class="ghost" type="button"></button>
       </div>
     </header>
-    <div id="searchbar" class="searchbar" hidden>
-      <input id="search" type="search" autocomplete="off" enterkeyhint="search" />
+    <div id="filters" class="filters" hidden>
+      <div class="searchrow">
+        <input id="search" type="search" autocomplete="off" enterkeyhint="search" />
+        <div id="layout" class="switch" role="radiogroup" hidden></div>
+      </div>
+      <nav id="cats" class="cats"></nav>
     </div>
-    <nav id="cats" class="cats"></nav>
     <main id="main"></main>
     <button id="bar" class="bar" type="button" hidden></button>
 
@@ -53,6 +59,19 @@
       </div>
     </dialog>
 
+    <dialog id="item-sheet" aria-labelledby="sheet-title">
+      <div class="sheet">
+        <div class="sheet-head">
+          <div>
+            <h2 id="sheet-title"></h2>
+            <p id="sheet-other" class="other"></p>
+          </div>
+          <button id="sheet-close" class="ghost" type="button"></button>
+        </div>
+        <div id="sheet-body" class="sheet"></div>
+      </div>
+    </dialog>
+
     <dialog id="scan" aria-labelledby="scan-title">
       <div class="sheet">
         <div class="sheet-head">
@@ -70,6 +89,7 @@
   import { createGuestApi, GuestApiError, type GuestError, type GuestItem, type GuestMenu } from '../lib/api';
   import { addOne, cartCount, cartTotal, newId, setQty, toLines, type CartLine } from '../lib/cart';
   import { makeT } from '../lib/i18n';
+  import { filterMenu, LAYOUTS, type Layout } from '../lib/menuView';
   import type { Lang } from '../shared/numerals';
 
   const api = createGuestApi({
@@ -114,6 +134,8 @@
   let cart: CartLine[] = [];
   let view: 'loading' | 'menu' | 'sent' | 'home' | { error: GuestError } = 'loading';
   let query = '';
+  let categoryId: string | null = null;
+  let layout: Layout = LAYOUTS.find((l) => l === store.get('tipdim.layout')) ?? 'table';
   let sending = false;
   let sendError: GuestError | null = null;
   // A retried send reuses the same round id, so the kitchen never gets it twice.
@@ -179,15 +201,19 @@
     $('scan-btn').textContent = tr.t('scan');
     $('scan-btn').setAttribute('aria-label', tr.t('scanTitle'));
     const search = $<HTMLInputElement>('search');
-    search.placeholder = tr.t('search');
+    const total = menu?.items.length ?? 0;
+    search.placeholder = menuOnly ? tr.t(total === 1 ? 'searchNOne' : 'searchN', { n: total }) : tr.t('search');
     search.setAttribute('aria-label', tr.t('search'));
-    $('searchbar').hidden = !(view === 'menu' && menu);
+    $('filters').hidden = !(view === 'menu' && menu);
+    $('layout').hidden = !menuOnly;
     if (!menu) $('restaurant').textContent = 'Tip Dim';
 
     if (menu) {
       $('restaurant').textContent = (lang === 'ne' ? menu.restaurant.name_ne : null) ?? menu.restaurant.name;
-      $('table').textContent = menu.table ? tr.t('table', { label: menu.table.label }) : '';
-      $('table').hidden = !menu.table;
+      const sold = menu.items.filter((i) => !i.in_stock).length;
+      $('table').textContent = menu.table
+        ? tr.t('table', { label: menu.table.label })
+        : tr.t(total === 1 ? 'itemCountOne' : 'itemCount', { n: total }) + (sold ? ` · ${tr.t('soldOutCount', { n: sold })}` : '');
       document.title = $('restaurant').textContent ?? 'Tip Dim';
     }
 
@@ -238,6 +264,10 @@
     if (!menu) return;
 
     cats.setAttribute('aria-label', tr.t('categories'));
+    if (menuOnly) {
+      renderBrowse(tr);
+      return;
+    }
     const q = query.trim().toLowerCase();
     const shown = menu.items.filter(
       (i) => !q || [i.name_en, i.name_ne, i.description_en, i.description_ne].some((x) => x?.toLowerCase().includes(q)),
@@ -292,6 +322,200 @@
       );
     }
     renderCart(tr);
+  }
+
+  const ICONS: Record<Layout, string> = {
+    table: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 10v10"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg>',
+  };
+  const LAYOUT_LABEL = { table: 'viewTable', list: 'viewList', grid: 'viewGrid' } as const;
+
+  // Rebuilding the controls drops keyboard focus; hand it back to the same control.
+  function refocus(selector: string) {
+    document.querySelector<HTMLElement>(selector)?.focus();
+  }
+
+  function thumb(item: GuestItem, name: string, cls = '') {
+    const box = el('span', { className: `thumb ${cls}`.trim() }, name.charAt(0).toUpperCase());
+    if (item.photo) {
+      const img = el('img', { src: item.photo, alt: '', loading: 'lazy' });
+      img.addEventListener('error', () => img.remove());
+      box.append(img);
+    }
+    return box;
+  }
+
+  const soldTag = (tr: ReturnType<typeof makeT>) => el('span', { className: 'tag-sold', textContent: tr.t('soldOut') });
+  const priced = (tr: ReturnType<typeof makeT>, label: string, paisa: number, sign = '') =>
+    el('span', { className: 'pill' }, `${label} ${sign}`, el('span', { className: 'mono', textContent: tr.money(paisa) }));
+  const count = (tr: ReturnType<typeof makeT>, key: 'sizeCount' | 'addonCount', n: number) =>
+    tr.t(n === 1 ? (`${key}One` as 'sizeCountOne') : key, { n });
+
+  // The menu-only page: the app's Menu tab, view only. Table (default), list or grid; category chips; A to Z.
+  function renderBrowse(tr: ReturnType<typeof makeT>) {
+    const m = menu;
+    if (!m) return;
+    const main = $('main');
+    const cats = $('cats');
+    const list = filterMenu(m.items, { lang, query, categoryId, name: (i) => tr.name(i) });
+
+    const chip = (id: string | null, label: string) =>
+      el('button', {
+        type: 'button',
+        className: 'chip',
+        textContent: label,
+        onclick: () => {
+          categoryId = id;
+          render();
+          refocus(`[data-cat="${id ?? ''}"]`);
+        },
+        aria: { pressed: String(categoryId === id) },
+      });
+    const chips = [chip(null, tr.t('all')), ...m.categories.map((c) => chip(c.id, tr.name(c)))];
+    chips.forEach((c, i) => (c.dataset.cat = i ? (m.categories[i - 1]?.id ?? '') : ''));
+    cats.append(...chips);
+
+    $('layout').replaceChildren(
+      ...LAYOUTS.map((l) => {
+        const b = el('button', {
+          type: 'button',
+          role: 'radio',
+          onclick: () => {
+            layout = l;
+            store.set('tipdim.layout', l);
+            render();
+            refocus(`[data-layout="${l}"]`);
+          },
+          aria: { checked: String(layout === l), label: tr.t(LAYOUT_LABEL[l]) },
+        });
+        b.dataset.layout = l;
+        b.innerHTML = ICONS[l];
+        return b;
+      }),
+    );
+
+    if (!list.length) {
+      main.append(el('p', { className: 'state muted', textContent: m.items.length ? tr.t('noMatch', { q: query.trim() }) : tr.t('emptyMenu') }));
+      return;
+    }
+    const catName = new Map(m.categories.map((c) => [c.id, tr.name(c)]));
+
+    if (layout === 'list') {
+      main.append(
+        el(
+          'ul',
+          { className: 'rows' },
+          ...list.map((i) => {
+            const name = tr.name(i);
+            const meta = el('span', { className: 'meta' }, el('span', { className: 'mono', textContent: tr.money(i.price_paisa) }));
+            if (i.sizes.length) meta.append(`· ${count(tr, 'sizeCount', i.sizes.length)}`);
+            if (i.addons?.length) meta.append(`· ${count(tr, 'addonCount', i.addons.length)}`);
+            const btn = el(
+              'button',
+              { type: 'button', className: i.in_stock ? 'rowbtn' : 'rowbtn out', aria: { label: tr.t('details', { name }) } },
+              thumb(i, name), el('span', { className: 'text' }, el('span', { textContent: name }), meta),
+              i.in_stock ? null : el('span', { className: 'soldtxt', textContent: tr.t('soldOut') }),
+            );
+            btn.dataset.id = i.id;
+            return el('li', {}, btn);
+          }),
+        ),
+      );
+      return;
+    }
+
+    if (layout === 'grid') {
+      main.append(
+        el(
+          'ul',
+          { className: 'grid' },
+          ...list.map((i) => {
+            const name = tr.name(i);
+            const extra = [i.sizes.length ? count(tr, 'sizeCount', i.sizes.length) : '', i.addons?.length ? count(tr, 'addonCount', i.addons.length) : '']
+              .filter(Boolean)
+              .join(' · ');
+            const tile = thumb(i, name, 'fill');
+            if (!i.in_stock) tile.append(soldTag(tr));
+            const btn = el(
+              'button',
+              { type: 'button', className: i.in_stock ? 'card' : 'card out', aria: { label: tr.t('details', { name }) } },
+              el('span', { className: 'body' }, tile, el('span', { className: 'info' }, el('b', { textContent: name }), el('span', { className: 'mono', textContent: tr.money(i.price_paisa) }), extra ? el('small', { textContent: extra }) : null)),
+            );
+            btn.dataset.id = i.id;
+            return el('li', {}, btn);
+          }),
+        ),
+      );
+      return;
+    }
+
+    const hasSizes = list.some((i) => i.sizes.length > 0);
+    const hasAddons = list.some((i) => i.addons?.length);
+    const extraCols = Number(hasSizes) + Number(hasAddons);
+    const th = (cls: string, key: 'colName' | 'colPrice' | 'colSizes' | 'colAddons') => el('th', { className: cls, scope: 'col', textContent: tr.t(key) });
+    const pills = (cells: Node[]) => (cells.length ? el('div', { className: 'cell pills' }, ...cells) : el('div', { className: 'cell muted', textContent: '—' }));
+    const table = el(
+      'table',
+      { className: 'tbl' },
+      el('thead', {}, el('tr', {}, th('c-name', 'colName'), th(extraCols ? 'c-price' : 'c-price fill', 'colPrice'), hasSizes ? th('', 'colSizes') : null, hasAddons ? th('', 'colAddons') : null)),
+      el(
+        'tbody',
+        {},
+        ...list.map((i) => {
+          const name = tr.name(i);
+          const cat = i.category_id ? catName.get(i.category_id) : '';
+          const row = el(
+            'tr',
+            { className: i.in_stock ? '' : 'out' },
+            el(
+              'td',
+              { className: 'c-name' },
+              el(
+                'button',
+                { type: 'button', className: 'namebtn cell', aria: { label: tr.t('details', { name }) } },
+                thumb(i, name, 'sm'),
+                el('span', { className: 'nametext' }, el('b', { textContent: name }), cat ? el('small', { textContent: cat }) : null, i.in_stock ? null : soldTag(tr)),
+              ),
+            ),
+            el('td', { className: 'c-price' }, el('div', { className: 'cell mono', textContent: tr.money(i.price_paisa) })),
+            hasSizes ? el('td', {}, pills(i.sizes.map((z) => priced(tr, tr.name(z), z.price_paisa)))) : null,
+            hasAddons ? el('td', {}, pills((i.addons ?? []).map((a) => (a.price_paisa ? priced(tr, tr.name(a), a.price_paisa, '+') : el('span', { className: 'pill', textContent: tr.name(a) }))))) : null,
+          );
+          row.dataset.id = i.id;
+          return row;
+        }),
+      ),
+    );
+    table.style.minWidth = `calc(var(--menu-name) + var(--menu-price) + ${extraCols} * var(--menu-wide))`;
+    main.append(el('div', { className: 'tbl-wrap' }, table));
+  }
+
+  function openSheet(item: GuestItem) {
+    const tr = makeT(lang);
+    const name = tr.name(item);
+    const other = lang === 'ne' ? item.name_en : item.name_ne;
+    $('sheet-title').textContent = name;
+    $('sheet-other').textContent = other && other !== name ? other : '';
+    $('sheet-other').hidden = !$('sheet-other').textContent;
+    $('sheet-close').textContent = tr.t('close');
+    const section = (title: string, rows: Node[]) =>
+      el('div', { className: 'detail' }, el('h3', { textContent: title }), ...rows);
+    const line = (label: string, value: Node) => el('div', {}, el('span', { textContent: label }), value);
+    const money = (paisa: number, sign = '') => el('span', { className: 'mono', textContent: sign + tr.money(paisa) });
+    const addons = item.addons ?? [];
+    const photo = item.photo ? el('div', { className: 'photo-big' }, el('img', { src: item.photo, alt: '' })) : null;
+    photo?.querySelector('img')?.addEventListener('error', () => photo.remove());
+    $('sheet-body').replaceChildren(
+      ...[
+        photo,
+        el('div', { className: 'pricerow' }, el('span', { className: 'mono big', textContent: tr.money(item.price_paisa) }), item.in_stock ? null : el('span', { className: 'badge', textContent: tr.t('soldOut') })),
+        item.sizes.length ? section(tr.t('sizes'), item.sizes.map((z) => line(tr.name(z), money(z.price_paisa)))) : null,
+        addons.length ? section(tr.t('addons'), addons.map((a) => line(tr.name(a), a.price_paisa ? money(a.price_paisa, '+') : el('span', { className: 'muted', textContent: tr.t('free') })))) : null,
+        item.sizes.length || addons.length ? null : el('p', { className: 'muted', textContent: tr.t('onlyOne') }),
+      ].filter((n): n is HTMLElement => n !== null),
+    );
+    ($('item-sheet') as HTMLDialogElement).showModal();
   }
 
   function renderCart(tr: ReturnType<typeof makeT>) {
@@ -380,6 +604,17 @@
     lang = lang === 'ne' ? 'en' : 'ne';
     store.set('tipdim.lang', lang);
     render();
+  });
+  $('main').addEventListener('click', (e) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')?.dataset.id;
+    const item = id ? items.get(id) : undefined;
+    if (menuOnly && item) openSheet(item);
+  });
+  const sheet = $('item-sheet') as HTMLDialogElement;
+  $('sheet-close').addEventListener('click', () => sheet.close());
+  // A tap on the dimmed area (the dialog itself, outside its sheet) closes it.
+  sheet.addEventListener('click', (e) => {
+    if (e.target === sheet) sheet.close();
   });
   $('bar').addEventListener('click', () => ($('cart') as HTMLDialogElement).showModal());
   $('cart-close').addEventListener('click', () => ($('cart') as HTMLDialogElement).close());
@@ -516,355 +751,3 @@
 
   void load();
 </script>
-
-<style is:global>
-  /* Tip Dim palette (src/theme/colors.ts), written for the web. */
-  :root {
-    --primary: #475569;
-    --on-primary: #ffffff;
-    --bg: #faf9f7;
-    --surface: #ffffff;
-    --surface-variant: #f5f5f4;
-    --outline: #e7e5e4;
-    --text: #1c1917;
-    --muted: #736c66;
-    --error: #dc2626;
-    --success: #15803d;
-    --radius: 12px;
-    --tap: 48px;
-    color-scheme: light dark;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --primary: #94a3b8;
-      --on-primary: #1c1917;
-      --bg: #1c1917;
-      --surface: #292524;
-      --surface-variant: #3f3f46;
-      --outline: #44403c;
-      --text: #faf9f7;
-      --muted: #b4ada7;
-      --error: #f87171;
-      --success: #4ade80;
-    }
-  }
-  * {
-    box-sizing: border-box;
-  }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 16px/1.45 'Noto Sans Devanagari', 'Inter', system-ui, sans-serif;
-    padding-bottom: calc(96px + env(safe-area-inset-bottom));
-  }
-  html[lang='en'] body {
-    font-family: 'Inter', 'Noto Sans Devanagari', system-ui, sans-serif;
-  }
-  h1,
-  h2,
-  h3,
-  p {
-    margin: 0;
-  }
-  button {
-    font: inherit;
-    min-height: var(--tap);
-    min-width: var(--tap);
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  button:focus-visible,
-  a:focus-visible,
-  textarea:focus-visible {
-    outline: 3px solid var(--primary);
-    outline-offset: 2px;
-  }
-  .muted {
-    color: var(--muted);
-  }
-  .ghost {
-    background: none;
-    border: 1px solid var(--outline);
-    color: var(--text);
-    padding: 0 16px;
-  }
-  .primary {
-    background: var(--primary);
-    color: var(--on-primary);
-    border: 0;
-    padding: 0 24px;
-    font-weight: 600;
-    width: 100%;
-  }
-  .primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 20px 16px 12px;
-  }
-  .top h1 {
-    font-size: 22px;
-    font-weight: 700;
-  }
-  .cats {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding: 8px 16px;
-    background: var(--bg);
-    scrollbar-width: none;
-  }
-  .chip {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    min-height: 40px;
-    padding: 0 14px;
-    border-radius: 10px;
-    border: 1px solid var(--outline);
-    background: var(--surface);
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 14px;
-  }
-  main {
-    padding: 0 16px;
-    max-width: 640px;
-    margin: 0 auto;
-  }
-  section {
-    scroll-margin-top: 64px;
-    padding-top: 16px;
-  }
-  section > h2 {
-    font-size: 18px;
-    margin-bottom: 8px;
-  }
-  .item {
-    background: var(--surface);
-    border: 1px solid var(--outline);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    margin-bottom: 8px;
-  }
-  .item.out h3,
-  .item.out .price {
-    color: var(--muted);
-  }
-  .item-head,
-  .size {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .item-text {
-    flex: 1;
-    min-width: 0;
-  }
-  .photo {
-    width: 64px;
-    height: 64px;
-    flex: none;
-    border-radius: 8px;
-    object-fit: cover;
-    background: var(--outline);
-  }
-  .item h3 {
-    font-size: 16px;
-    font-weight: 600;
-  }
-  .item p {
-    font-size: 14px;
-  }
-  .size {
-    border-top: 1px solid var(--outline);
-    margin-top: 10px;
-    padding-top: 10px;
-  }
-  .item-end {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: none;
-  }
-  .price {
-    font-weight: 600;
-  }
-  .add {
-    background: var(--surface);
-    border: 1.5px solid var(--primary);
-    color: var(--primary);
-    font-weight: 600;
-    padding: 0 18px;
-  }
-  .badge {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-    background: var(--surface-variant);
-    border-radius: 999px;
-    padding: 4px 10px;
-  }
-  .stepper {
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--outline);
-    border-radius: 999px;
-    background: var(--surface-variant);
-  }
-  .stepper button {
-    border: 0;
-    background: none;
-    color: var(--text);
-    font-size: 20px;
-  }
-  .stepper span {
-    min-width: 24px;
-    text-align: center;
-    font-weight: 600;
-  }
-  .bar {
-    position: fixed;
-    left: 16px;
-    right: 16px;
-    bottom: calc(16px + env(safe-area-inset-bottom));
-    max-width: 608px;
-    margin: 0 auto;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 20px;
-    min-height: 56px;
-    border: 0;
-    background: var(--primary);
-    color: var(--on-primary);
-    box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
-  }
-  .bar[hidden] {
-    display: none;
-  }
-  .state {
-    display: grid;
-    gap: 16px;
-    padding: 48px 8px;
-    text-align: center;
-  }
-  .sent h2 {
-    color: var(--success);
-    font-size: 22px;
-  }
-  .error {
-    color: var(--error);
-  }
-  dialog {
-    border: 0;
-    padding: 0;
-    margin: auto auto 0;
-    width: 100%;
-    max-width: 640px;
-    max-height: 90dvh;
-    border-radius: 20px 20px 0 0;
-    background: var(--surface);
-    color: var(--text);
-  }
-  dialog::backdrop {
-    background: rgb(0 0 0 / 0.4);
-  }
-  .sheet {
-    display: grid;
-    gap: 16px;
-    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
-  }
-  .sheet-head,
-  .total {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .lines {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 8px;
-  }
-  .lines li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-  }
-  .note {
-    display: grid;
-    gap: 6px;
-    font-weight: 600;
-  }
-  textarea {
-    font: inherit;
-    font-weight: 400;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--outline);
-    border-radius: var(--radius);
-    padding: 10px 12px;
-    resize: vertical;
-  }
-  .total strong {
-    font-size: 20px;
-  }
-  .head-actions {
-    display: flex;
-    gap: 8px;
-    flex: none;
-  }
-  .searchbar {
-    padding: 0 16px 8px;
-  }
-  .searchbar input,
-  .paste input {
-    width: 100%;
-    min-height: var(--tap);
-    padding: 0 16px;
-    border: 1px solid var(--outline);
-    border-radius: 999px;
-    background: var(--surface);
-    color: var(--text);
-    font: inherit;
-  }
-  .home {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
-    text-align: center;
-  }
-  .paste {
-    display: flex;
-    gap: 8px;
-  }
-  .wide {
-    width: 100%;
-  }
-  .viewfinder {
-    border-radius: var(--radius);
-    overflow: hidden;
-    background: #000;
-    aspect-ratio: 1;
-  }
-  .viewfinder video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-</style>

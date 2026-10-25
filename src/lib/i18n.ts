@@ -1,4 +1,4 @@
-// Guest page strings. Nepali first, like the app; numerals follow the language.
+// Guest page strings. English first (the page remembers a guest's choice); numerals follow the language.
 import { localizeDigits, type Lang } from '../shared/numerals';
 import { formatMoney } from '../shared/money';
 
@@ -32,6 +32,22 @@ const en = {
   payAtCounter: 'Pay at the counter when you are done.',
   orderMore: 'Order more',
   retry: 'Try again',
+  scan: 'Scan QR',
+  scanTitle: 'Scan a QR code',
+  scanHint: 'Point the camera at the QR code on the table or the menu board.',
+  scanStarting: 'Opening the camera…',
+  scanDenied: 'Camera access is blocked. Allow it in your browser settings, or paste the link instead.',
+  scanUnsupported: 'This browser cannot use the camera here. Use your phone camera app instead.',
+  scanBad: 'That is not a Tip Dim QR code.',
+  homeTitle: 'See the menu',
+  homeBody: 'Scan the QR code on your table or at the counter to see the menu.',
+  orPaste: 'Or paste the link',
+  linkPlaceholder: 'https://…/m/…',
+  open: 'Open',
+  lastMenu: 'Open {name}',
+  search: 'Search the menu',
+  noMatch: 'Nothing matches “{q}”.',
+  other: 'Other',
   errors: {
     unknown_table: 'This QR code is not linked to a table. Please ask the staff.',
     unknown_menu: 'This menu link is not valid. Please ask the staff for the QR code.',
@@ -73,6 +89,22 @@ const ne: Strings = {
   payAtCounter: 'खाना सकिएपछि काउन्टरमा भुक्तानी गर्नुहोस्।',
   orderMore: 'अझै अर्डर गर्नुहोस्',
   retry: 'फेरि प्रयास गर्नुहोस्',
+  scan: 'QR स्क्यान',
+  scanTitle: 'QR कोड स्क्यान गर्नुहोस्',
+  scanHint: 'क्यामेरा टेबल वा मेनु बोर्डको QR कोडतिर देखाउनुहोस्।',
+  scanStarting: 'क्यामेरा खोल्दै…',
+  scanDenied: 'क्यामेराको अनुमति बन्द छ। ब्राउजर सेटिङमा अनुमति दिनुहोस्, वा लिङ्क टाँस्नुहोस्।',
+  scanUnsupported: 'यो ब्राउजरले यहाँ क्यामेरा चलाउन सक्दैन। फोनको क्यामेरा एप प्रयोग गर्नुहोस्।',
+  scanBad: 'यो Tip Dim को QR कोड होइन।',
+  homeTitle: 'मेनु हेर्नुहोस्',
+  homeBody: 'मेनु हेर्न टेबल वा काउन्टरको QR कोड स्क्यान गर्नुहोस्।',
+  orPaste: 'वा लिङ्क टाँस्नुहोस्',
+  linkPlaceholder: 'https://…/m/…',
+  open: 'खोल्नुहोस्',
+  lastMenu: '{name} खोल्नुहोस्',
+  search: 'मेनुमा खोज्नुहोस्',
+  noMatch: '“{q}” सँग मिल्ने केही छैन।',
+  other: 'अन्य',
   errors: {
     unknown_table: 'यो QR कोड कुनै टेबलसँग जोडिएको छैन। कर्मचारीलाई सोध्नुहोस्।',
     unknown_menu: 'यो मेनु लिङ्क मान्य छैन। कर्मचारीसँग QR कोड सोध्नुहोस्।',

@@ -1,0 +1,14 @@
+{
+  "name": "tipdim-guest",
+  "private": true,
+  "type": "module",
+  "description": "Tip Dim QR ordering for guests: a small static web page, no app download.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "7.3.8"
+  }
+}

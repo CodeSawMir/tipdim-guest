@@ -1,0 +1,656 @@
+---
+// The whole guest app: one static page. The table token comes from the URL at runtime (/t/<token>, or ?t=<token>),
+// so the host only has to rewrite /t/* to this page (public/_redirects, vercel.json).
+---
+
+<!doctype html>
+<html lang="ne">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#475569" />
+    <meta name="robots" content="noindex" />
+    <title>Tip Dim</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap"
+    />
+  </head>
+  <body>
+    <header class="top">
+      <div class="who">
+        <h1 id="restaurant"></h1>
+        <p id="table" class="muted"></p>
+      </div>
+      <button id="lang" class="ghost" type="button"></button>
+    </header>
+    <nav id="cats" class="cats"></nav>
+    <main id="main"></main>
+    <button id="bar" class="bar" type="button" hidden></button>
+
+    <dialog id="cart" aria-labelledby="cart-title">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 id="cart-title"></h2>
+          <button id="cart-close" class="ghost" type="button"></button>
+        </div>
+        <ul id="cart-lines" class="lines"></ul>
+        <label class="note">
+          <span id="note-label"></span>
+          <textarea id="note" maxlength="200" rows="2"></textarea>
+        </label>
+        <p id="cart-error" class="error" role="alert" hidden></p>
+        <div class="total"><span id="total-label"></span><strong id="total"></strong></div>
+        <button id="send" class="primary" type="button"></button>
+      </div>
+    </dialog>
+  </body>
+</html>
+
+<script>
+  import { createGuestApi, GuestApiError, type GuestError, type GuestItem, type GuestMenu } from '../lib/api';
+  import { addOne, cartCount, cartTotal, newId, setQty, toLines, type CartLine } from '../lib/cart';
+  import { makeT } from '../lib/i18n';
+  import type { Lang } from '../shared/numerals';
+
+  const api = createGuestApi({
+    url: import.meta.env.PUBLIC_SUPABASE_URL ?? '',
+    anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY ?? '',
+    fetch: (input, init) => fetch(input, init),
+  });
+
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  // /m/<token> is the cafe's menu-only QR: the menu with photos, no table, no ordering.
+  const menuToken = location.pathname.match(/^\/m\/([^/]+)/u)?.[1] ?? new URLSearchParams(location.search).get('m') ?? '';
+  const menuOnly = menuToken !== '';
+  const token = menuOnly
+    ? menuToken
+    : (location.pathname.match(/^\/t\/([^/]+)/u)?.[1] ?? new URLSearchParams(location.search).get('t') ?? '');
+
+  // localStorage can be blocked (private mode); the page still works, it just forgets between visits.
+  const store = {
+    get: (k: string) => {
+      try {
+        return localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    set: (k: string, v: string) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+        /* not kept */
+      }
+    },
+  };
+  // One session per table: the server ties a session to the table it first ordered from.
+  const sessionKey = `tipdim.session.${token}`;
+  const session = store.get(sessionKey) ?? newId();
+  store.set(sessionKey, session);
+
+  let lang: Lang = store.get('tipdim.lang') === 'en' ? 'en' : 'ne';
+  let menu: GuestMenu | null = null;
+  let items = new Map<string, GuestItem>();
+  let cart: CartLine[] = [];
+  let view: 'loading' | 'menu' | 'sent' | { error: GuestError } = 'loading';
+  let sending = false;
+  let sendError: GuestError | null = null;
+  // A retried send reuses the same round id, so the kitchen never gets it twice.
+  let pendingRound: string | null = null;
+
+  function el<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    props: Partial<HTMLElementTagNameMap[K]> & { aria?: Record<string, string> } = {},
+    ...children: (Node | string | null)[]
+  ) {
+    const { aria, ...rest } = props;
+    const node = Object.assign(document.createElement(tag), rest);
+    for (const [k, v] of Object.entries(aria ?? {})) node.setAttribute(`aria-${k}`, v);
+    node.append(...children.filter((c): c is Node | string => c !== null));
+    return node;
+  }
+
+  function stepper(index: number, label: string, qty: number, tr: ReturnType<typeof makeT>) {
+    const { t } = tr;
+    return el(
+      'div',
+      { className: 'stepper' },
+      el('button', {
+        type: 'button',
+        textContent: '−',
+        onclick: () => update(setQty(cart, index, qty - 1)),
+        aria: { label: t('less', { name: label }) },
+      }),
+      el('span', { textContent: tr.digits(qty), aria: { label: t('qty', { n: qty }) } }),
+      el('button', {
+        type: 'button',
+        textContent: '+',
+        onclick: () => update(setQty(cart, index, qty + 1)),
+        aria: { label: t('more', { name: label }) },
+      }),
+    );
+  }
+
+  function addControl(item: GuestItem, sizeId: string | null, label: string, tr: ReturnType<typeof makeT>) {
+    if (!item.in_stock) return el('span', { className: 'badge', textContent: tr.t('soldOut') });
+    const index = cart.findIndex((l) => l.itemId === item.id && l.sizeId === sizeId);
+    const line = cart[index];
+    if (line) return stepper(index, label, line.qty, tr);
+    return el('button', {
+      type: 'button',
+      className: 'add',
+      textContent: tr.t('add'),
+      onclick: () => update(addOne(cart, item.id, sizeId)),
+      aria: { label: tr.t('addLabel', { name: label }) },
+    });
+  }
+
+  function render() {
+    const tr = makeT(lang);
+    document.documentElement.lang = lang;
+    $('lang').textContent = tr.t('switchLang');
+    $('lang').setAttribute('aria-label', tr.t('switchLangLabel'));
+    const main = $('main');
+    const cats = $('cats');
+    main.replaceChildren();
+    cats.replaceChildren();
+    $('bar').hidden = true;
+
+    if (menu) {
+      $('restaurant').textContent = (lang === 'ne' ? menu.restaurant.name_ne : null) ?? menu.restaurant.name;
+      $('table').textContent = menu.table ? tr.t('table', { label: menu.table.label }) : '';
+      $('table').hidden = !menu.table;
+      document.title = $('restaurant').textContent ?? 'Tip Dim';
+    }
+
+    if (view === 'loading') {
+      main.append(el('p', { className: 'state muted', role: 'status', textContent: tr.t('loading') }));
+      return;
+    }
+    if (typeof view === 'object') {
+      const code = view.error;
+      main.append(
+        el(
+          'div',
+          { className: 'state' },
+          el('p', { role: 'alert', textContent: tr.error(code) }),
+          code === 'network' || code === 'unknown'
+            ? el('button', { type: 'button', className: 'primary', textContent: tr.t('retry'), onclick: () => void load() })
+            : null,
+        ),
+      );
+      return;
+    }
+    if (view === 'sent' && menu) {
+      main.append(
+        el(
+          'div',
+          { className: 'state sent', role: 'status' },
+          el('h2', { textContent: tr.t('sentTitle') }),
+          el('p', { textContent: menu.needs_accept ? tr.t('sentNeedsAccept') : tr.t('sentAccepted') }),
+          // Online payment waits on the digital-payments decision; guests pay at the counter for now.
+          el('p', { className: 'muted', textContent: tr.t('payAtCounter') }),
+          el('button', {
+            type: 'button',
+            className: 'primary',
+            textContent: tr.t('orderMore'),
+            onclick: () => {
+              view = 'menu';
+              render();
+            },
+          }),
+        ),
+      );
+      return;
+    }
+    if (!menu) return;
+
+    cats.setAttribute('aria-label', tr.t('categories'));
+    for (const c of menu.categories) {
+      if (!menu.items.some((i) => i.category_id === c.id)) continue;
+      cats.append(el('a', { href: `#c-${c.id}`, className: 'chip', textContent: tr.name(c) }));
+      const section = el('section', { id: `c-${c.id}` }, el('h2', { textContent: tr.name(c) }));
+      for (const item of menu.items.filter((i) => i.category_id === c.id)) {
+        const name = tr.name(item);
+        const desc = lang === 'ne' ? (item.description_ne ?? item.description_en) : (item.description_en ?? item.description_ne);
+        const card = el(
+          'article',
+          { className: item.in_stock ? 'item' : 'item out' },
+          el(
+            'div',
+            { className: 'item-head' },
+            item.photo ? el('img', { className: 'photo', src: item.photo, alt: '', loading: 'lazy', width: 64, height: 64 }) : null,
+            el('div', { className: 'item-text' }, el('h3', { textContent: name }), desc ? el('p', { className: 'muted', textContent: desc }) : null),
+            item.sizes.length ? null : el('div', { className: 'item-end' }, el('span', { className: 'price', textContent: tr.money(item.price_paisa) }), menuOnly ? null : addControl(item, null, name, tr)),
+          ),
+        );
+        for (const size of item.sizes) {
+          const label = `${name} · ${tr.name(size)}`;
+          card.append(
+            el(
+              'div',
+              { className: 'size' },
+              el('span', { textContent: tr.name(size) }),
+              el('div', { className: 'item-end' }, el('span', { className: 'price', textContent: tr.money(size.price_paisa) }), menuOnly ? null : addControl(item, size.id, label, tr)),
+            ),
+          );
+        }
+        section.append(card);
+      }
+      main.append(section);
+    }
+
+    const n = menuOnly ? 0 : cartCount(cart);
+    if (n) {
+      const bar = $('bar');
+      bar.hidden = false;
+      bar.replaceChildren(
+        el('span', { textContent: `${tr.t('viewOrder')} · ${tr.t('items', { n })}` }),
+        el('strong', { textContent: tr.money(cartTotal(cart, items)) }),
+      );
+    }
+    renderCart(tr);
+  }
+
+  function renderCart(tr: ReturnType<typeof makeT>) {
+    $('cart-title').textContent = tr.t('yourOrder');
+    $('cart-close').textContent = tr.t('close');
+    $('note-label').textContent = tr.t('note');
+    ($('note') as HTMLTextAreaElement).placeholder = tr.t('notePlaceholder');
+    $('total-label').textContent = tr.t('total');
+    $('total').textContent = tr.money(cartTotal(cart, items));
+    const send = $('send') as HTMLButtonElement;
+    send.textContent = sending ? tr.t('sending') : tr.t('send');
+    send.disabled = sending || cart.length === 0;
+    const err = $('cart-error');
+    err.hidden = !sendError;
+    err.textContent = sendError ? tr.error(sendError) : '';
+
+    const lines = $('cart-lines');
+    lines.replaceChildren();
+    if (!cart.length) lines.append(el('li', { className: 'muted', textContent: tr.t('emptyCart') }));
+    cart.forEach((l, i) => {
+      const item = items.get(l.itemId);
+      if (!item) return;
+      const size = item.sizes.find((s) => s.id === l.sizeId);
+      const label = size ? `${tr.name(item)} · ${tr.name(size)}` : tr.name(item);
+      lines.append(el('li', {}, el('span', { textContent: label }), stepper(i, label, l.qty, tr)));
+    });
+  }
+
+  function update(next: CartLine[]) {
+    // Every render rebuilds the list, so keep keyboard and screen-reader focus on the same control
+    // (an "Add" that became a stepper hands focus to its "+").
+    const label = document.activeElement?.getAttribute('aria-label') ?? '';
+    const name = menu ? label.replace(makeT(lang).t('addLabel', { name: '' }).trim(), '').trim() : '';
+    cart = next;
+    pendingRound = null;
+    sendError = null;
+    render();
+    const scope = ($('cart') as HTMLDialogElement).open ? $('cart') : document;
+    const by = (l: string) => scope.querySelector<HTMLElement>(`[aria-label="${CSS.escape(l)}"]`);
+    (by(label) ?? by(makeT(lang).t('more', { name })) ?? (scope === document ? null : $('cart-close')))?.focus();
+  }
+
+  async function load() {
+    view = 'loading';
+    render();
+    if (!token) {
+      view = { error: menuOnly ? 'unknown_menu' : 'unknown_table' };
+      return render();
+    }
+    try {
+      menu = menuOnly ? await api.publicMenu(token) : await api.menu(token);
+      items = new Map(menu.items.map((i) => [i.id, i]));
+      // Drop anything that ran out since it was added.
+      cart = cart.filter((l) => items.get(l.itemId)?.in_stock);
+      view = 'menu';
+    } catch (e) {
+      view = { error: e instanceof GuestApiError ? e.code : 'unknown' };
+    }
+    render();
+  }
+
+  async function send() {
+    if (sending || !cart.length) return;
+    sending = true;
+    sendError = null;
+    pendingRound ??= newId();
+    render();
+    try {
+      await api.place(token, { session, order: newId(), round: pendingRound }, toLines(cart, ($('note') as HTMLTextAreaElement).value, newId));
+      cart = [];
+      pendingRound = null;
+      ($('note') as HTMLTextAreaElement).value = '';
+      ($('cart') as HTMLDialogElement).close();
+      view = 'sent';
+    } catch (e) {
+      sendError = e instanceof GuestApiError ? e.code : 'unknown';
+      if (sendError === 'unavailable') void load();
+    }
+    sending = false;
+    render();
+  }
+
+  $('lang').addEventListener('click', () => {
+    lang = lang === 'ne' ? 'en' : 'ne';
+    store.set('tipdim.lang', lang);
+    render();
+  });
+  $('bar').addEventListener('click', () => ($('cart') as HTMLDialogElement).showModal());
+  $('cart-close').addEventListener('click', () => ($('cart') as HTMLDialogElement).close());
+  $('send').addEventListener('click', () => void send());
+
+  void load();
+</script>
+
+<style is:global>
+  /* Tip Dim palette (src/theme/colors.ts), written for the web. */
+  :root {
+    --primary: #475569;
+    --on-primary: #ffffff;
+    --bg: #faf9f7;
+    --surface: #ffffff;
+    --surface-variant: #f5f5f4;
+    --outline: #e7e5e4;
+    --text: #1c1917;
+    --muted: #736c66;
+    --error: #dc2626;
+    --success: #15803d;
+    --radius: 12px;
+    --tap: 48px;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --primary: #94a3b8;
+      --on-primary: #1c1917;
+      --bg: #1c1917;
+      --surface: #292524;
+      --surface-variant: #3f3f46;
+      --outline: #44403c;
+      --text: #faf9f7;
+      --muted: #b4ada7;
+      --error: #f87171;
+      --success: #4ade80;
+    }
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.45 'Noto Sans Devanagari', 'Inter', system-ui, sans-serif;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+  html[lang='en'] body {
+    font-family: 'Inter', 'Noto Sans Devanagari', system-ui, sans-serif;
+  }
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+  button {
+    font: inherit;
+    min-height: var(--tap);
+    min-width: var(--tap);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  textarea:focus-visible {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .ghost {
+    background: none;
+    border: 1px solid var(--outline);
+    color: var(--text);
+    padding: 0 16px;
+  }
+  .primary {
+    background: var(--primary);
+    color: var(--on-primary);
+    border: 0;
+    padding: 0 24px;
+    font-weight: 600;
+    width: 100%;
+  }
+  .primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 16px 12px;
+  }
+  .top h1 {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .cats {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 8px 16px;
+    background: var(--bg);
+    scrollbar-width: none;
+  }
+  .chip {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--outline);
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  main {
+    padding: 0 16px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  section {
+    scroll-margin-top: 64px;
+    padding-top: 16px;
+  }
+  section > h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+  }
+  .item {
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 8px;
+  }
+  .item.out h3,
+  .item.out .price {
+    color: var(--muted);
+  }
+  .item-head,
+  .size {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .item-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .photo {
+    width: 64px;
+    height: 64px;
+    flex: none;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--outline);
+  }
+  .item h3 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .item p {
+    font-size: 14px;
+  }
+  .size {
+    border-top: 1px solid var(--outline);
+    margin-top: 10px;
+    padding-top: 10px;
+  }
+  .item-end {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: none;
+  }
+  .price {
+    font-weight: 600;
+  }
+  .add {
+    background: var(--surface);
+    border: 1.5px solid var(--primary);
+    color: var(--primary);
+    font-weight: 600;
+    padding: 0 18px;
+  }
+  .badge {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--surface-variant);
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--outline);
+    border-radius: 999px;
+    background: var(--surface-variant);
+  }
+  .stepper button {
+    border: 0;
+    background: none;
+    color: var(--text);
+    font-size: 20px;
+  }
+  .stepper span {
+    min-width: 24px;
+    text-align: center;
+    font-weight: 600;
+  }
+  .bar {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    max-width: 608px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    min-height: 56px;
+    border: 0;
+    background: var(--primary);
+    color: var(--on-primary);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+  }
+  .bar[hidden] {
+    display: none;
+  }
+  .state {
+    display: grid;
+    gap: 16px;
+    padding: 48px 8px;
+    text-align: center;
+  }
+  .sent h2 {
+    color: var(--success);
+    font-size: 22px;
+  }
+  .error {
+    color: var(--error);
+  }
+  dialog {
+    border: 0;
+    padding: 0;
+    margin: auto auto 0;
+    width: 100%;
+    max-width: 640px;
+    max-height: 90dvh;
+    border-radius: 20px 20px 0 0;
+    background: var(--surface);
+    color: var(--text);
+  }
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.4);
+  }
+  .sheet {
+    display: grid;
+    gap: 16px;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .sheet-head,
+  .total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .lines li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .note {
+    display: grid;
+    gap: 6px;
+    font-weight: 600;
+  }
+  textarea {
+    font: inherit;
+    font-weight: 400;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--outline);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    resize: vertical;
+  }
+  .total strong {
+    font-size: 20px;
+  }
+</style>

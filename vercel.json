@@ -1,0 +1,9 @@
+{
+  "framework": "astro",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/t/:token", "destination": "/index.html" },
+    { "source": "/m/:token", "destination": "/index.html" }
+  ]
+}

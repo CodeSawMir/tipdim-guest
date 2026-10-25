@@ -1,0 +1,3 @@
+# Netlify / Cloudflare Pages: every table and menu link opens the one page.
+/t/*  /index.html  200
+/m/*  /index.html  200

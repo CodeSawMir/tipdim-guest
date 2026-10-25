@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "deploy": "npx --yes vercel@54 link --yes --project tipdim-guest && npx --yes vercel@54 deploy --prod --yes"
   },
   "dependencies": {
     "astro": "7.3.8",

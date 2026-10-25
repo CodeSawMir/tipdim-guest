@@ -28,6 +28,7 @@ import '../styles/guest.css';
         <p id="table" class="sub"></p>
       </div>
       <div class="head-actions">
+        <button id="orders-btn" class="ghost" type="button" hidden></button>
         <button id="scan-btn" class="ghost" type="button"></button>
         <button id="lang" class="ghost" type="button"></button>
       </div>
@@ -59,6 +60,17 @@ import '../styles/guest.css';
       </div>
     </dialog>
 
+    <dialog id="orders" aria-labelledby="orders-title">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 id="orders-title"></h2>
+          <button id="orders-close" class="ghost" type="button"></button>
+        </div>
+        <div id="orders-body" class="orders-body"></div>
+        <p id="orders-live" class="muted"></p>
+      </div>
+    </dialog>
+
     <dialog id="item-sheet" aria-labelledby="sheet-title">
       <div class="sheet">
         <div class="sheet-head">
@@ -86,9 +98,17 @@ import '../styles/guest.css';
 </html>
 
 <script>
-  import { createGuestApi, GuestApiError, type GuestError, type GuestItem, type GuestMenu } from '../lib/api';
+  import {
+    createGuestApi,
+    GuestApiError,
+    type GuestError,
+    type GuestItem,
+    type GuestMenu,
+    type GuestOrders,
+    type Stage,
+  } from '../lib/api';
   import { addOne, cartCount, cartTotal, newId, setQty, toLines, type CartLine } from '../lib/cart';
-  import { makeT } from '../lib/i18n';
+  import { makeT, type Key } from '../lib/i18n';
   import { filterMenu, LAYOUTS, type Layout } from '../lib/menuView';
   import type { Lang } from '../shared/numerals';
 
@@ -198,6 +218,9 @@ import '../styles/guest.css';
     main.replaceChildren();
     cats.replaceChildren();
     $('bar').hidden = true;
+    const ordersBtn = $('orders-btn');
+    ordersBtn.textContent = tr.t('orders');
+    ordersBtn.hidden = menuOnly || !menu || view === 'loading';
     $('scan-btn').textContent = tr.t('scan');
     $('scan-btn').setAttribute('aria-label', tr.t('scanTitle'));
     const search = $<HTMLInputElement>('search');
@@ -251,6 +274,12 @@ import '../styles/guest.css';
           el('button', {
             type: 'button',
             className: 'primary',
+            textContent: tr.t('trackOrder'),
+            onclick: () => void openOrders(),
+          }),
+          el('button', {
+            type: 'button',
+            className: 'ghost',
             textContent: tr.t('orderMore'),
             onclick: () => {
               view = 'menu';
@@ -578,6 +607,79 @@ import '../styles/guest.css';
     }
     render();
   }
+
+  // The table's orders, by stage. Only the table's own QR token opens them; the dialog refreshes itself while open.
+  const STEPS: Stage[] = ['placed', 'preparing', 'ready', 'served'];
+  let ordersData: GuestOrders | null = null;
+  let ordersError: GuestError | null = null;
+  let ordersTimer: ReturnType<typeof setInterval> | undefined;
+  const ordersDialog = $('orders') as HTMLDialogElement;
+
+  function renderOrders() {
+    const tr = makeT(lang);
+    $('orders-title').textContent = tr.t('ordersTitle');
+    $('orders-close').textContent = tr.t('close');
+    $('orders-live').textContent = tr.t('ordersLive');
+    const body = $('orders-body');
+    body.replaceChildren();
+    if (ordersError) {
+      body.append(el('p', { className: 'error', role: 'alert', textContent: tr.error(ordersError) }));
+      return;
+    }
+    const rounds = ordersData?.rounds ?? [];
+    if (!rounds.length) body.append(el('p', { className: 'muted', textContent: ordersData ? tr.t('ordersEmpty') : tr.t('loading') }));
+    for (const r of rounds) {
+      const at = STEPS.indexOf(r.status);
+      const track = el('div', { className: `track stage-${r.status}`, aria: { hidden: 'true' } });
+      for (const [i] of STEPS.entries()) track.append(el('span', { className: i <= at ? 'on' : '' }));
+      const list = el('ul', { className: 'lines' });
+      for (const l of r.lines) {
+        const size = l.variant_name_en || l.variant_name_ne ? ` · ${tr.name({ name_en: l.variant_name_en, name_ne: l.variant_name_ne })}` : '';
+        const stage: Stage = l.cancelled ? 'cancelled' : r.status;
+        list.append(
+          el(
+            'li',
+            { className: l.cancelled ? 'out' : '' },
+            el('span', { textContent: `${tr.digits(l.qty)}× ${tr.name(l)}${size}` }),
+            el('span', { className: `stage-chip ${stage}`, textContent: tr.t(`stage_${stage}` as Key) }),
+          ),
+        );
+      }
+      const time = new Date(r.created_at).toLocaleTimeString(lang === 'ne' ? 'ne-NP' : 'en-GB', { hour: '2-digit', minute: '2-digit' });
+      body.append(
+        el(
+          'section',
+          { className: 'round' },
+          el('h3', { textContent: `${tr.t('round', { n: r.round_no })} · ${time}` }),
+          r.status === 'cancelled' || r.status === 'waiting' ? null : track,
+          list,
+        ),
+      );
+    }
+  }
+
+  async function refreshOrders() {
+    try {
+      ordersData = await api.orders(token);
+      ordersError = null;
+    } catch (e) {
+      ordersError = e instanceof GuestApiError ? e.code : 'unknown';
+    }
+    if (ordersDialog.open) renderOrders();
+  }
+
+  async function openOrders() {
+    ordersData = null;
+    ordersError = null;
+    renderOrders();
+    if (!ordersDialog.open) ordersDialog.showModal();
+    clearInterval(ordersTimer);
+    ordersTimer = setInterval(() => void refreshOrders(), 8000);
+    await refreshOrders();
+  }
+  ordersDialog.addEventListener('close', () => clearInterval(ordersTimer));
+  $('orders-close').addEventListener('click', () => ordersDialog.close());
+  $('orders-btn').addEventListener('click', () => void openOrders());
 
   async function send() {
     if (sending || !cart.length) return;

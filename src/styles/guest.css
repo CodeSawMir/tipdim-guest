@@ -745,3 +745,60 @@ textarea:focus,
 .tbl .c-price.fill {
   width: auto;
 }
+
+/* Orders: the table's order by round, each item with the stage it is at. */
+.orders-body {
+  display: grid;
+  gap: var(--sp-lg);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.round h3 {
+  margin: 0 0 var(--sp-sm);
+  font-size: 1rem;
+}
+.round .lines li.out span:first-child {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.track {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-xs);
+  margin-bottom: var(--sp-sm);
+}
+.track span {
+  height: var(--sp-xs);
+  border-radius: var(--r-pill);
+  background: var(--outline-strong);
+  transition: background var(--motion);
+}
+.track span.on {
+  background: var(--primary);
+}
+.stage-served .track span.on,
+.track.stage-served span.on {
+  background: var(--success);
+}
+.stage-chip {
+  flex: none;
+  padding: var(--sp-xxs) var(--sp-sm);
+  border-radius: var(--r-pill);
+  background: var(--surface-variant);
+  color: var(--on-surface-variant);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.stage-chip.preparing,
+.stage-chip.ready {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.stage-chip.served {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+.stage-chip.cancelled {
+  background: var(--error-container);
+  color: var(--on-error-container);
+}

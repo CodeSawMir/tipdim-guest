@@ -28,6 +28,16 @@ export type GuestLine = {
   qty: number;
   note_text: string | null;
 };
+/** Where a round is: waiting = a QR round the staff have not confirmed; the rest follow the kitchen's stages. */
+export type Stage = 'waiting' | 'placed' | 'preparing' | 'ready' | 'served' | 'cancelled';
+export type OrderedLine = Named & {
+  variant_name_en: string | null;
+  variant_name_ne: string | null;
+  qty: number;
+  cancelled: boolean;
+};
+export type OrderedRound = { round_no: number; created_at: string; status: Stage; lines: OrderedLine[] };
+export type GuestOrders = { rounds: OrderedRound[] };
 export type PlaceResult = { order_id: string; round_id: string; status: 'placed' | 'duplicate' };
 
 /** Why a call failed, as a code the page words in the guest's language. */
@@ -79,6 +89,8 @@ export function createGuestApi(c: ApiConfig) {
   }
   return {
     menu: (token: string) => rpc<GuestMenu>('guest_menu', { p_qr_token: token }),
+    /** The table's open order, round by round with each round's stage. Needs the table's QR token. */
+    orders: (token: string) => rpc<GuestOrders>('guest_orders', { p_qr_token: token }),
     /** The cafe's menu from its menu-only QR: the same menu, with no table and no ordering. */
     publicMenu: (token: string) => rpc<GuestMenu>('public_menu', { p_menu_token: token }),
     /** Idempotent per round id: sending the same round twice (a double tap, a retry) places it once. */
